@@ -12,5 +12,5 @@ if you run it in maxwell node (CPU) :
 
 if you run with GPUs in maxwell :
 
-  1. `singularity instance start --bind $PWD:/home --nv docker:://engineren/ml:pytorch testPy`
+  1. `singularity instance start --bind $PWD:/home --nv docker://engineren/ml:pytorch testPy`
   2. `singularity run instance://testPy python main.py --imageSize 16 --batchSize 512 --experiment test --cuda`
