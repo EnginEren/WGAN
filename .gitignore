@@ -1,0 +1,12 @@
+# HDF5 files
+data/
+
+# test directory 
+test/
+
+# i-python checkpoints
+.ipynb_checkpoints/
+
+# pycache
+models/__pycache__/
+
