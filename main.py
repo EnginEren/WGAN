@@ -57,7 +57,7 @@ if __name__=="__main__":
 
     ## load data 
     loader_params = {'batch_size': opt.batchSize, 'shuffle': True, 'num_workers': opt.workers}
-    d = H.HDF5Dataset('/home/eren/WassersteinGAN/gamma.hdf5', '87k/layers')
+    d = H.HDF5Dataset('./data/gamma.hdf5', '87k/layers')
     dataloader = data.DataLoader(d, **loader_params)
 
     ngpu = int(opt.ngpu)
