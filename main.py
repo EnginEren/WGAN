@@ -68,9 +68,9 @@ if __name__=="__main__":
     n_extra_layers = int(opt.n_extra_layers)
 
     # write out generator config to generate images together wth training checkpoints (.pth)
-    #generator_config = {"imageSize": opt.imageSize, "nz": nz, "nc": nc, "ngf": ngf, "ngpu": ngpu, "n_extra_layers": n_extra_layers, "noBN": opt.noBN, "mlp_G": opt.mlp_G}
-    #with open(os.path.join(opt.experiment, "generator_config.json"), 'w') as gcfg:
-    #    gcfg.write(json.dumps(generator_config)+"\n")
+    generator_config = {"imageSize": opt.imageSize, "nz": nz, "nc": nc, "ngf": ngf, "ngpu": ngpu, "n_extra_layers": n_extra_layers, "noBN": opt.noBN, "mlp_G": opt.mlp_G}
+    with open(os.path.join(opt.experiment, "generator_config.json"), 'w') as gcfg:
+        gcfg.write(json.dumps(generator_config)+"\n")
 
     # custom weights initialization called on netG and netD
     def weights_init(m):

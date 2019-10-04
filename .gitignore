@@ -10,3 +10,5 @@ test/
 # pycache
 models/__pycache__/
 
+# trash
+trash/
