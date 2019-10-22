@@ -35,6 +35,7 @@ if __name__=="__main__":
     parser.add_argument('--lrG', type=float, default=0.00005, help='learning rate for Generator, default=0.00005')
     parser.add_argument('--beta1', type=float, default=0.5, help='beta1 for adam. default=0.5')
     parser.add_argument('--cuda'  , action='store_true', help='enables cuda')
+    parser.add_argument('--full' , action='store_true', help='switch to full all layers 30 x 30 x 30 ')
     parser.add_argument('--ngpu'  , type=int, default=1, help='number of GPUs to use')
     parser.add_argument('--netG', default='', help="path to netG (to continue training)")
     parser.add_argument('--netD', default='', help="path to netD (to continue training)")
@@ -55,10 +56,17 @@ if __name__=="__main__":
         print("WARNING: You have a CUDA device, so you should probably run with --cuda")
 
 
-    ## load data 
-    loader_params = {'batch_size': opt.batchSize, 'shuffle': True, 'num_workers': opt.workers}
-    d = H.HDF5Dataset('./data/gamma.hdf5', '87k/layers')
-    dataloader = data.DataLoader(d, **loader_params)
+    ## Load and make them iterable
+    loader_params = {'batch_size': opt.batchSize, 'shuffle': True, 'num_workers': 6}
+    path = '/beegfs/desy/user/eren/WassersteinGAN/data/gamma-fullG.hdf5'
+    d = H.HDF5Dataset(path, '30x30/layers')
+    e = H.HDF5Dataset(path, '30x30/energy')
+    dataloader_layer  = data.DataLoader(d, **loader_params)
+    dataloader_energy = data.DataLoader(e, **loader_params)
+
+    data_layer = iter(dataloader_layer)
+    data_energy = iter(dataloader_energy)
+
 
     ngpu = int(opt.ngpu)
     nz = int(opt.nz)
@@ -80,13 +88,12 @@ if __name__=="__main__":
         elif classname.find('BatchNorm') != -1:
             m.weight.data.normal_(1.0, 0.02)
             m.bias.data.fill_(0)
+        elif classname.find('Linear') != -1:
+            m.weight.data.normal_(0.0, 0.02)
+            m.bias.data.fill_(0)    
 
-    if opt.noBN:
-        netG = dcgan.DCGAN_G_nobn(opt.imageSize, nc, nz, ngf, ngpu, n_extra_layers)
-    elif opt.mlp_G:
-        netG = mlp.MLP_G(opt.imageSize, nc, nz, ngf, ngpu, n_extra_layers)
-    else:
-        netG = dcgan.DCGAN_G(opt.imageSize, nc, nz, ngf, ngpu, n_extra_layers)
+    ## create generator 
+    netG = dcgan.DCGAN_G(nc, ngf, nz)
 
     # write out generator config to generate images together wth training checkpoints (.pth)
     #generator_config = {"imageSize": opt.imageSize, "nz": nz, "nc": nc, "ngf": ngf, "ngpu": ngpu, "n_extra_layers": n_extra_layers, "noBN": opt.noBN, "mlp_G": opt.mlp_G}
@@ -98,28 +105,36 @@ if __name__=="__main__":
         netG.load_state_dict(torch.load(opt.netG))
     print(netG)
 
-    if opt.mlp_D:
-        netD = mlp.MLP_D(opt.imageSize, nc, ndf, ngpu, 1)
-    else:
-        netD = dcgan.DCGAN_D(opt.imageSize, nc, ndf, ngpu, 1)
-        netD.apply(weights_init)
+    ## create critics (i.e Discriminator)
+    netD = dcgan.DCGAN_D(opt.imageSize, nc, ndf)
+    netD.apply(weights_init)
 
     if opt.netD != '':
         netD.load_state_dict(torch.load(opt.netD))
     print(netD)
 
-    input = torch.FloatTensor(opt.batchSize, nc, opt.imageSize, opt.imageSize)
-    noise = torch.FloatTensor(opt.batchSize, nz, 1, 1)
-    fixed_noise = torch.FloatTensor(opt.batchSize, nz, 1, 1).normal_(0, 1)
+    ## layers
+    input_layer = torch.FloatTensor(opt.batchSize, nc, opt.imageSize, opt.imageSize)
+
+    ## incoming energy
+    input_energy = torch.FloatTensor(opt.batchSize,1)
+    
+
+    
+    noise = torch.FloatTensor(opt.batchSize, nz)
+    fixed_noise = torch.FloatTensor(opt.batchSize, nz).normal_(0, 1)
     one = torch.FloatTensor([1])
     mone = one * -1
 
-    if opt.cuda:
+    if torch.cuda.is_available():
         netD.cuda()
         netG.cuda()
-        input = input.cuda()
+        input_energy = input_energy.cuda()
+        input_layer = input_layer.cuda()
         one, mone = one.cuda(), mone.cuda()
         noise, fixed_noise = noise.cuda(), fixed_noise.cuda()
+    
+    
 
     # setup optimizer
     if opt.adam:
@@ -131,9 +146,10 @@ if __name__=="__main__":
 
     gen_iterations = 0
     for epoch in range(opt.niter):
-        data_iter = iter(dataloader)
+        data_layer = iter(dataloader_layer)
+        data_energy = iter(dataloader_energy)
         i = 0
-        while i < len(dataloader):
+        while i < len(dataloader_layer):
             ############################
             # (1) Update D network
             ###########################
@@ -142,39 +158,87 @@ if __name__=="__main__":
 
             # train the discriminator Diters times
             if gen_iterations < 25 or gen_iterations % 500 == 0:
-                Diters = 100
+                Diters = 150
             else:
                 Diters = opt.Diters
             j = 0
-            while j < Diters and i < len(dataloader):
+            while j < Diters and i < len(dataloader_layer):
                 j += 1
 
                 # clamp parameters to a cube
                 for p in netD.parameters():
-                    p.data.clamp_(opt.clamp_lower, opt.clamp_upper)
+                    p.data.clamp_(-0.01, 0.01)
 
-                data = data_iter.next()
+                ### input size matters. Reshape if we want 30x30
+                if opt.full :
+                    layer = data_layer.next()
+                else :
+                    tmp = data_layer.next()      ## [Bs, 30, 30 , 30 ]
+                    layer = torch.sum(tmp, dim=1)
+                    layer = layer.unsqueeze(1)  ## [Bs, 1, 30 , 30 ]
+                    
+                energy = data_energy.next()
                 i += 1
-
+                
+                #print ("Updating D network, step: {}".format(j))
+                
                 # train with real
-                real_cpu = data
+                ## layers
+                real_cpu = layer
+
+                ## incoming energy
+                real_cpu_e = energy
+
                 netD.zero_grad()
                 batch_size = real_cpu.size(0)
-
-                if opt.cuda:
+                
+                if torch.cuda.is_available():
                     real_cpu = real_cpu.cuda()
-                input.resize_as_(real_cpu.float()).copy_(real_cpu.float())
-                inputv = Variable(input)
-
-                errD_real = netD(inputv)
-                errD_real.backward(one)
-
+                    real_cpu_e = real_cpu_e.cuda()
+                
+                ## input layers
+                input_layer.resize_as_(real_cpu.float()).copy_(real_cpu.float())
+                
+                ## input energy
+                input_energy.resize_as_(real_cpu_e.float()).copy_(real_cpu_e.float())
+ 
+		## quick and dirt fix for imp parameter 
+                impoint = torch.zeros([batch_size,2]) 
+                 
+                if torch.cuda.is_available():
+                    inputv_layer = Variable(input_layer.cuda())
+                    inputv_e = Variable(input_energy.cuda())
+                    inputv_imp = Variable(impoint.cuda()) ## input impact point
+                else :
+                    inputv_layer = Variable(input_layer)
+                    inputv_e = Variable(input_energy)
+                    inputv_imp = Variable(impoint) ## input impact point
+                    
+		
+                #print (epoch, inputv_e.shape)
+                #print (epoch, inputv_imp.shape) 
+                errD_real = netD(inputv_layer, inputv_e, inputv_imp)
+                
+                
                 # train with fake
-                noise.resize_(opt.batchSize, nz, 1, 1).normal_(0, 1)
-                noisev = Variable(noise, volatile = True) # totally freeze netG
-                fake = Variable(netG(noisev).data)
-                inputv = fake
-                errD_fake = netD(inputv)
+                noise.resize_(batch_size, nz).normal_(0, 1)
+                input_energy.resize_(batch_size, 1).uniform_(10, 100)
+                
+                if torch.cuda.is_available():
+                    inputv_e = Variable(input_energy.cuda())
+                    noisev = Variable(noise.cuda(), volatile = True) # totally freeze netG
+                else :
+                    inputv_e = Variable(input_energy)
+                    noisev = Variable(noise, volatile = True) # totally freeze netG
+                
+                fake = netG(noisev, inputv_e, inputv_imp)
+                
+                if torch.cuda.is_available():
+                    inputv_layer = Variable(fake.cuda())
+                else :
+                    inputv_layer = Variable(fake)
+                    
+                errD_fake = netD(inputv_layer, inputv_e, inputv_imp)
                 errD_fake.backward(mone)
                 errD = errD_real - errD_fake
                 optimizerD.step()
@@ -182,28 +246,38 @@ if __name__=="__main__":
             ############################
             # (2) Update G network
             ###########################
+            #print ("Updating G network")
             for p in netD.parameters():
                 p.requires_grad = False # to avoid computation
             netG.zero_grad()
             # in case our last batch was the tail batch of the dataloader,
             # make sure we feed a full batch of noise
-            noise.resize_(opt.batchSize, nz, 1, 1).normal_(0, 1)
-            noisev = Variable(noise)
-            fake = netG(noisev)
-            errG = netD(fake)
+            noise.resize_(batch_size, nz).normal_(0, 1)
+            input_energy.resize_(batch_size, 1).uniform_(10, 100)
+            if torch.cuda.is_available():
+                noisev = Variable(noise.cuda())
+                inputv_e = Variable(input_energy.cuda())
+                inputv_imp = Variable(impoint.cuda())  ## input impact point
+            else :
+                noisev = Variable(noise)
+                inputv_e = Variable(input_energy)
+                inputv_imp = Variable(impoint)  ## input impact point
+            
+            
+            
+            fake = netG(noisev, inputv_e, inputv_imp)
+            
+            if torch.cuda.is_available():
+                fake = fake.cuda()
+                
+            errG = netD(fake, inputv_e, inputv_imp)
             errG.backward(one)
             optimizerG.step()
-            gen_iterations += 1
-
+            gen_iterations += 1    
             print('[%d/%d][%d/%d][%d] Loss_D: %f Loss_G: %f Loss_D_real: %f Loss_D_fake %f'
-                % (epoch, opt.niter, i, len(dataloader), gen_iterations,
+                % (epoch, opt.niter, i, len(dataloader_layer), gen_iterations,
                 errD.data[0], errG.data[0], errD_real.data[0], errD_fake.data[0]))
-            if gen_iterations % 500 == 0:
-                real_cpu = real_cpu.mul(0.5).add(0.5)
-                #vutils.save_image(real_cpu, '{0}/real_samples.png'.format(opt.experiment))
-                fake = netG(Variable(fixed_noise, volatile=True))
-                fake.data = fake.data.mul(0.5).add(0.5)
-                #vutils.save_image(fake.data, '{0}/fake_samples_{1}.png'.format(opt.experiment, gen_iterations))
+
 
         # do checkpointing
         torch.save(netG.state_dict(), '{0}/netG_epoch_{1}.pth'.format(opt.experiment, epoch))

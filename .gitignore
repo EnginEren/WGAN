@@ -12,3 +12,7 @@ models/__pycache__/
 
 # trash
 trash/
+
+# output
+output/
+

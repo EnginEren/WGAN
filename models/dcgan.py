@@ -1,6 +1,10 @@
 import torch
 import torch.nn as nn
 import torch.nn.parallel
+import torch.nn.functional as F
+from torch.autograd import Variable
+import models.HDF5Dataset as H
+from torch.utils import data
 
 class DCGAN_D(nn.Module):
     """ 
@@ -8,106 +12,165 @@ class DCGAN_D(nn.Module):
 
     """
 
-    def __init__(self, isize, nc, ndf, ngpu, n_extra_layers):
-        super(DCGAN_D, self).__init__()
-        self.ngpu = ngpu
-        assert isize % 16 == 0, "isize has to be a multiple of 16"
+    def __init__(self, isize, nc, ndf):
+        super(DCGAN_D, self).__init__()    
+        self.ndf = ndf
+        self.isize = isize
+        self.nc = nc
 
-        main = nn.Sequential()
-        # input is nc x isize x isize
-        main.add_module('initial:{0}-{1}:conv'.format(nc, ndf),
-                        nn.Conv2d(in_channels=nc, out_channels=ndf, kernel_size=4, stride=2, padding=1, bias=False))
-        main.add_module('initial:{0}:relu'.format(ndf),
-                        nn.LeakyReLU(0.2, inplace=True))
-        csize, cndf = isize / 2, ndf
+        ## linear layers
+        self.cond1 = torch.nn.Linear(3, 10)
+        self.cond2 = torch.nn.Linear(10, isize*isize)
+        
+        ### convolution
+        self.conv1 = torch.nn.Conv2d(nc+1, ndf*8, kernel_size=3, stride=1, padding=1)
+        ## batch-normalization
+        self.bn1 = torch.nn.BatchNorm2d(ndf*8)
+        ## convolution
+        self.conv2 = torch.nn.Conv2d(ndf*8, ndf*4, kernel_size=3, stride=1, padding=1)
+        ## batch-normalization
+        self.bn2 = torch.nn.BatchNorm2d(ndf*4)
+        #convolution
+        self.conv3 = torch.nn.Conv2d(ndf*4, ndf*2, kernel_size=3, stride=1, padding=1)
+        ## batch-normalization
+        self.bn3 = torch.nn.BatchNorm2d(ndf*2)
+        #convolution
+        self.conv4 = torch.nn.Conv2d(ndf*2, ndf, kernel_size=3, stride=1, padding=1)
+        
+        # ndf * isize * isize input features, ndf output features (see sizing flow below)
+        self.fc1 = torch.nn.Linear(ndf * isize * isize, 128)
+        
+        #128 -- > 64
+        self.fc2 = torch.nn.Linear(128, 64)
+        #64 ---> 1 output
 
-        # Extra layers 
-        for t in range(n_extra_layers):
-            main.add_module('extra-layers-{0}:{1}:conv'.format(t, cndf),
-                            nn.Conv2d(cndf, cndf, 3, 1, 1, bias=False))
-            main.add_module('extra-layers-{0}:{1}:batchnorm'.format(t, cndf),
-                            nn.BatchNorm2d(cndf))
-            main.add_module('extra-layers-{0}:{1}:relu'.format(t, cndf),
-                            nn.LeakyReLU(0.2, inplace=True))
+        self.fc3 = torch.nn.Linear(64,1)
+        
+    def forward(self, x, energy, impactPoint):
+        
+        ## conditioning on energy and impact parameter
+        t = F.leaky_relu(self.cond1(torch.cat((energy, impactPoint), 1)), 0.2, inplace=True)
+        t = F.leaky_relu(self.cond2(t))
+        
+        ## reshape into two 2D
+        t = t.view(-1, 1, self.isize, self.isize)
+        
+        ## concentration with input : 31 (30layers + 1 cond) x 30 x 30
+        x = torch.cat((x, t), 1)
+        
+        x = F.leaky_relu(self.bn1(self.conv1(x)), 0.2, inplace=True)
+        x = F.leaky_relu(self.bn2(self.conv2(x)), 0.2, inplace=True)
+        x = F.leaky_relu(self.bn3(self.conv3(x)), 0.2, inplace=True)
+        x = F.leaky_relu(self.conv4(x), 0.2, inplace=True)
+        #Size changes from (nc, 30, 30) to (ndf, 30, 30)
 
 
-        while csize > 4:
-            in_feat = cndf
-            out_feat = cndf * 2
-            main.add_module('pyramid:{0}-{1}:conv'.format(in_feat, out_feat),
-                            nn.Conv2d(in_channels=in_feat, out_channels=out_feat, kernel_size=4, stride=2, padding=1, bias=False))
-            main.add_module('pyramid:{0}:batchnorm'.format(out_feat),
-                            nn.BatchNorm2d(out_feat))
-            main.add_module('pyramid:{0}:relu'.format(out_feat),
-                            nn.LeakyReLU(0.2, inplace=True))
-            cndf = cndf * 2
-            csize = csize / 2
+        #Reshape data to input to the input layer of the neural net
+        #Size changes from (ndf, 30, 30) to (1, ndf * 30 * 30)
+        #Recall that the -1 infers this dimension from the other given dimension
+        x = x.view(-1, self.ndf * self.isize * self.isize)
+        
+        #Computes the activation of the first fully connected layer
+        #Size changes from (1, ndf * 30 * 30 ) to (1, 128)
+        x = F.leaky_relu(self.fc1(x), 0.2, inplace=True)
+        
+        #Computes the second fully connected layer (activation applied later)
+        #Size changes from (1,128) to (1, 64)
+        x = F.leaky_relu(self.fc2(x), 0.2, inplace=True)
 
-        # state size. K x 4 x 4
-        main.add_module('final:{0}-{1}:conv'.format(cndf, 1),
-                        nn.Conv2d(in_channels=cndf, out_channels=1, kernel_size=4, stride=1, padding=0, bias=False))
-        self.main = main
+        #Computes the third fully connected layer
+        #Size changes from 64 to 1
+
+        x = self.fc3(x)
+        x = x.mean(0)
+        return x.view(1)
 
 
-    def forward(self, input):
-        if isinstance(input.data, torch.cuda.FloatTensor) and self.ngpu > 1:
-            output = nn.parallel.data_parallel(self.main, input, range(self.ngpu))
-        else: 
-            output = self.main(input)
-            
-        output = output.mean(0)
-        return output.view(1)
 
 class DCGAN_G(nn.Module):
-    def __init__(self, isize, nc, nz, ngf, ngpu, n_extra_layers):
-        super(DCGAN_G, self).__init__()
-        self.ngpu = ngpu
-        assert isize % 16 == 0, "isize has to be a multiple of 16"
+    """ 
+    generator component of WGAN
 
-        cngf, tisize = ngf//2, 4
-        while tisize != isize:
-            cngf = cngf * 2
-            tisize = tisize * 2
-
-        main = nn.Sequential()
-        # input is Z, going into a convolution
-        main.add_module('initial:{0}-{1}:convt'.format(nz, cngf),
-                        nn.ConvTranspose2d(nz, cngf, 4, 1, 0, bias=False))
-        main.add_module('initial:{0}:batchnorm'.format(cngf),
-                        nn.BatchNorm2d(cngf))
-        main.add_module('initial:{0}:relu'.format(cngf),
-                        nn.ReLU(True))
-
-        csize, cndf = 4, cngf
-        while csize < isize//2:
-            main.add_module('pyramid:{0}-{1}:convt'.format(cngf, cngf//2),
-                            nn.ConvTranspose2d(cngf, cngf//2, 4, 2, 1, bias=False))
-            main.add_module('pyramid:{0}:batchnorm'.format(cngf//2),
-                            nn.BatchNorm2d(cngf//2))
-            main.add_module('pyramid:{0}:relu'.format(cngf//2),
-                            nn.ReLU(True))
-            cngf = cngf // 2
-            csize = csize * 2
-
-         # Extra layers
-        for t in range(n_extra_layers):
-            main.add_module('extra-layers-{0}:{1}:conv'.format(t, cngf),
-                            nn.Conv2d(cngf, cngf, 3, 1, 1, bias=False))
-            main.add_module('extra-layers-{0}:{1}:batchnorm'.format(t, cngf),
-                            nn.BatchNorm2d(cngf))
-            main.add_module('extra-layers-{0}:{1}:relu'.format(t, cngf),
-                            nn.ReLU(True))
+    """
+    def __init__(self, nc, ngf, z):
+        super(DCGAN_G, self).__init__()    
+        self.ngf = ngf
+        self.nc = nc
+        self.z = z
         
+        self.cond1 = torch.nn.Linear(self.z+3, 50)
+        self.cond2 = torch.nn.Linear(50, 10*10*ngf)
+        
+        ## deconvolution
+        self.deconv1 = torch.nn.ConvTranspose2d(ngf, ngf*2, kernel_size=3, stride=3, padding=1)
+        ## batch-normalization
+        self.bn1 = torch.nn.BatchNorm2d(ngf*2)
+        ## deconvolution
+        self.deconv2 = torch.nn.ConvTranspose2d(ngf*2, ngf*4, kernel_size=3, stride=2, padding=1)
+        ## batch-normalization
+        self.bn2 = torch.nn.BatchNorm2d(ngf*4)
+        # deconvolution
+        self.deconv3 = torch.nn.ConvTranspose2d(ngf*4, ngf*8, kernel_size=3, stride=2, padding=1)
+        ## batch-normalization
+        self.bn3 = torch.nn.BatchNorm2d(ngf*8)
+        
+        ## convolution 
+        self.conv0 = torch.nn.Conv2d(ngf*8, 1, kernel_size=3, stride=4, padding=1)
+        ## batch-normalisation
+        self.bn0 = torch.nn.BatchNorm2d(1)
+        
+        ## convolution 
+        self.conv1 = torch.nn.Conv2d(nc, ngf*4, kernel_size=3, stride=1, padding=1)
+        ## batch-normalisation
+        self.bn01 = torch.nn.BatchNorm2d(ngf*4)
+        
+        ## convolution 
+        self.conv2 = torch.nn.Conv2d(ngf*4, ngf*8, kernel_size=3, stride=1, padding=1)
+        ## batch-normalisation
+        self.bn02 = torch.nn.BatchNorm2d(ngf*8)
+        
+        ## convolution 
+        self.conv3 = torch.nn.Conv2d(ngf*8, ngf*4, kernel_size=3, stride=1, padding=1)
+        ## batch-normalisation
+        self.bn03 = torch.nn.BatchNorm2d(ngf*4)
+        
+        ## convolution 
+        self.conv4 = torch.nn.Conv2d(ngf*4, nc, kernel_size=3, stride=1, padding=1)
+    
+        
+        
+    def forward(self, noise, energy, impactPoint):
+        
+        layer = []
+         ### need to do generated 30 layers, hence the loop!
+        for i in range(self.nc):     
+            ## conditioning on energy, impact parameter and noise
+            x = F.leaky_relu(self.cond1(torch.cat((energy, impactPoint, noise), 1)), 0.2, inplace=True)
+            x = F.leaky_relu(self.cond2(x), 0.2, inplace=True)
+            
+            ## change size for deconv2d network. Image is 10x10
+            x = x.view(-1,self.ngf,10,10)        
 
-        main.add_module('final:{0}-{1}:convt'.format(cngf, 1),
-                        nn.ConvTranspose2d(cngf, nc, 4, 2, 1, bias=False))
-        main.add_module('final:{0}:tanh'.format(1),
-                        nn.Tanh())
-        self.main = main
+            ## apply series of deconv2d and batch-norm
+            x = F.leaky_relu(self.bn1(self.deconv1(x, output_size=[x.size(0), x.size(1) , 30, 30])), 0.2, inplace=True) 
+            x = F.leaky_relu(self.bn2(self.deconv2(x, output_size=[x.size(0), x.size(1) , 60, 60])), 0.2, inplace=True)
+            x = F.leaky_relu(self.bn3(self.deconv3(x, output_size=[x.size(0), x.size(1) , 120, 120])), 0.2, inplace=True)                         
+            
+            ##Image is 120x120
+            
+            ## one standard conv and batch-norm layer (I dont know why :) )
+            x = F.leaky_relu(self.bn0(self.conv0(x)), 0.2, inplace=True)
 
-    def forward(self, input):
-        if isinstance(input.data, torch.cuda.FloatTensor) and self.ngpu > 1:
-            output = nn.parallel.data_parallel(self.main, input, range(self.ngpu))
-        else: 
-            output = self.main(input)
-        return output 
+            layer.append(x)
+        
+       
+        ## concentration of the layers
+        x = torch.cat([layer[i] for l in range(self.nc)], 1)
+
+        ## Further apply series of conv and batch norm layers 
+        x = F.leaky_relu(self.bn01(self.conv1(x)), 0.2, inplace=True)
+        x = F.leaky_relu(self.bn02(self.conv2(x)), 0.2, inplace=True)
+        x = F.leaky_relu(self.bn03(self.conv3(x)), 0.2, inplace=True)
+        x = F.relu(self.conv4(x), inplace=True)
+
+        return x

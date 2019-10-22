@@ -13,8 +13,8 @@ import multiprocessing as mp
 ## function for pixels
 def pixs (strt,end):
     
-    binX = np.arange(-30, 31, 2)
-    binZ = np.arange(-30, 31, 2)
+    binX = np.arange(-75, 76, 5)
+    binZ = np.arange(-75, 76, 5)
     
     
 
@@ -105,7 +105,7 @@ if __name__=="__main__":
     
     #Open HDF5 file for writing
     hf = h5py.File('../data/gamma-fullG.hdf5', 'w')
-    grp = hf.create_group("test")
+    grp = hf.create_group("30x30")
 
 
     ## write to hdf5 files
