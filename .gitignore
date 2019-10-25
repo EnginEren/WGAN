@@ -16,3 +16,7 @@ trash/
 # output
 output/
 
+# hdf5 creation files
+convert_to_hdf5/*.err
+convert_to_hdf5/*.out
+

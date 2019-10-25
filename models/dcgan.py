@@ -37,14 +37,8 @@ class DCGAN_D(nn.Module):
         #convolution
         self.conv4 = torch.nn.Conv2d(ndf*2, ndf, kernel_size=3, stride=1, padding=1)
         
-        # ndf * isize * isize input features, ndf output features (see sizing flow below)
-        self.fc1 = torch.nn.Linear(ndf * isize * isize, 128)
-        
-        #128 -- > 64
-        self.fc2 = torch.nn.Linear(128, 64)
-        #64 ---> 1 output
-
-        self.fc3 = torch.nn.Linear(64,1)
+        # Read-out layer : ndf * isize * isize input features, ndf output features 
+        self.fc1 = torch.nn.Linear(ndf * isize * isize, 1)
         
     def forward(self, x, energy, impactPoint):
         
@@ -62,26 +56,17 @@ class DCGAN_D(nn.Module):
         x = F.leaky_relu(self.bn2(self.conv2(x)), 0.2, inplace=True)
         x = F.leaky_relu(self.bn3(self.conv3(x)), 0.2, inplace=True)
         x = F.leaky_relu(self.conv4(x), 0.2, inplace=True)
-        #Size changes from (nc, 30, 30) to (ndf, 30, 30)
+        #Size changes from (nc+1, 30, 30) to (ndf, 30, 30)
 
-
-        #Reshape data to input to the input layer of the neural net
-        #Size changes from (ndf, 30, 30) to (1, ndf * 30 * 30)
-        #Recall that the -1 infers this dimension from the other given dimension
+        
         x = x.view(-1, self.ndf * self.isize * self.isize)
-        
-        #Computes the activation of the first fully connected layer
-        #Size changes from (1, ndf * 30 * 30 ) to (1, 128)
-        x = F.leaky_relu(self.fc1(x), 0.2, inplace=True)
-        
-        #Computes the second fully connected layer (activation applied later)
-        #Size changes from (1,128) to (1, 64)
-        x = F.leaky_relu(self.fc2(x), 0.2, inplace=True)
+        # Size changes from (ndf, 30, 30) to (1, ndf * 30 * 30) 
+        #Recall that the -1 infers this dimension from the other given dimension
 
-        #Computes the third fully connected layer
-        #Size changes from 64 to 1
 
-        x = self.fc3(x)
+        # Read-out layer 
+        x = self.fc1(x)
+        
         x = x.mean(0)
         return x.view(1)
 

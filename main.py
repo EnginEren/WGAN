@@ -23,11 +23,11 @@ import models.mlp as mlp
 if __name__=="__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--workers', type=int, help='number of data loading workers', default=6)
+    parser.add_argument('--workers', type=int, help='number of data loading workers', default=4)
     parser.add_argument('--batchSize', type=int, default=64, help='input batch size')
     parser.add_argument('--imageSize', type=int, default=64, help='the height / width of the input image to network')
     parser.add_argument('--nc', type=int, default=5, help='input image channels')
-    parser.add_argument('--nz', type=int, default=1024, help='size of the latent z vector')
+    parser.add_argument('--nz', type=int, default=100, help='size of the latent z vector')
     parser.add_argument('--ngf', type=int, default=64)
     parser.add_argument('--ndf', type=int, default=64)
     parser.add_argument('--niter', type=int, default=50, help='number of epochs to train for')
@@ -77,7 +77,7 @@ if __name__=="__main__":
 
     # write out generator config to generate images together wth training checkpoints (.pth)
     generator_config = {"imageSize": opt.imageSize, "nz": nz, "nc": nc, "ngf": ngf, "ngpu": ngpu, "n_extra_layers": n_extra_layers, "noBN": opt.noBN, "mlp_G": opt.mlp_G}
-    with open(os.path.join(opt.experiment, "generator_config.json"), 'w') as gcfg:
+    with open(os.path.join("output/{}".format(opt.experiment), "generator_config.json"), 'w') as gcfg:
         gcfg.write(json.dumps(generator_config)+"\n")
 
     # custom weights initialization called on netG and netD
@@ -158,7 +158,7 @@ if __name__=="__main__":
 
             # train the discriminator Diters times
             if gen_iterations < 25 or gen_iterations % 500 == 0:
-                Diters = 150
+                Diters = 200
             else:
                 Diters = opt.Diters
             j = 0
@@ -202,8 +202,8 @@ if __name__=="__main__":
                 ## input energy
                 input_energy.resize_as_(real_cpu_e.float()).copy_(real_cpu_e.float())
  
-		## quick and dirt fix for imp parameter 
-                impoint = torch.zeros([batch_size,2]) 
+		        ## quick and dirt fix for imp parameter 
+                impoint = torch.FloatTensor(batch_size,2).uniform_(-1.5, 1.5) 
                  
                 if torch.cuda.is_available():
                     inputv_layer = Variable(input_layer.cuda())
@@ -218,11 +218,11 @@ if __name__=="__main__":
                 #print (epoch, inputv_e.shape)
                 #print (epoch, inputv_imp.shape) 
                 errD_real = netD(inputv_layer, inputv_e, inputv_imp)
-                
+                errD_real.backward(one) 
                 
                 # train with fake
                 noise.resize_(batch_size, nz).normal_(0, 1)
-                input_energy.resize_(batch_size, 1).uniform_(10, 100)
+                input_energy.resize_(batch_size, 1).uniform_(10,100)
                 
                 if torch.cuda.is_available():
                     inputv_e = Variable(input_energy.cuda())
@@ -231,13 +231,8 @@ if __name__=="__main__":
                     inputv_e = Variable(input_energy)
                     noisev = Variable(noise, volatile = True) # totally freeze netG
                 
-                fake = netG(noisev, inputv_e, inputv_imp)
-                
-                if torch.cuda.is_available():
-                    inputv_layer = Variable(fake.cuda())
-                else :
-                    inputv_layer = Variable(fake)
-                    
+                fake = Variable(netG(noisev, inputv_e, inputv_imp).data)
+                inputv_layer = fake
                 errD_fake = netD(inputv_layer, inputv_e, inputv_imp)
                 errD_fake.backward(mone)
                 errD = errD_real - errD_fake
@@ -265,11 +260,7 @@ if __name__=="__main__":
             
             
             
-            fake = netG(noisev, inputv_e, inputv_imp)
-            
-            if torch.cuda.is_available():
-                fake = fake.cuda()
-                
+            fake = netG(noisev, inputv_e, inputv_imp) 
             errG = netD(fake, inputv_e, inputv_imp)
             errG.backward(one)
             optimizerG.step()
@@ -280,8 +271,8 @@ if __name__=="__main__":
 
 
         # do checkpointing
-        torch.save(netG.state_dict(), '{0}/netG_epoch_{1}.pth'.format(opt.experiment, epoch))
-        torch.save(netD.state_dict(), '{0}/netD_epoch_{1}.pth'.format(opt.experiment, epoch))
+        torch.save(netG.state_dict(), 'output/{0}/netG_epoch_{1}.pth'.format(opt.experiment, epoch))
+        torch.save(netD.state_dict(), 'output/{0}/netD_epoch_{1}.pth'.format(opt.experiment, epoch))
 
 
     

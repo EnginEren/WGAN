@@ -11,7 +11,7 @@
 cd /beegfs/desy/user/eren/WassersteinGAN/convert_to_hdf5
 
 # start 0
-python create_hdf5.py --ncpu 32 --rootfile ../data/calo_hits-90k.root --branch photonSIM 
+python create_hdf5.py --ncpu 16 --rootfile ../data/calo_hits-50GeV.root --branch photonSIM 
 
 exit 0;
 

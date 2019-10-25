@@ -104,7 +104,7 @@ if __name__=="__main__":
 
     
     #Open HDF5 file for writing
-    hf = h5py.File('../data/gamma-fullG.hdf5', 'w')
+    hf = h5py.File('../data/gamma-fullG-50GeV.hdf5', 'w')
     grp = hf.create_group("30x30")
 
 
