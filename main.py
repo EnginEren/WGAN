@@ -59,6 +59,7 @@ if __name__=="__main__":
     ## Load and make them iterable
     loader_params = {'batch_size': opt.batchSize, 'shuffle': True, 'num_workers': 6}
     path = '/beegfs/desy/user/eren/WassersteinGAN/data/gamma-fullG.hdf5'
+    #path = '/beegfs/desy/user/eren/WassersteinGAN/data/gamma-fullG-50GeV.hdf5'
     d = H.HDF5Dataset(path, '30x30/layers')
     e = H.HDF5Dataset(path, '30x30/energy')
     dataloader_layer  = data.DataLoader(d, **loader_params)
@@ -118,9 +119,7 @@ if __name__=="__main__":
 
     ## incoming energy
     input_energy = torch.FloatTensor(opt.batchSize,1)
-    
-
-    
+       
     noise = torch.FloatTensor(opt.batchSize, nz)
     fixed_noise = torch.FloatTensor(opt.batchSize, nz).normal_(0, 1)
     one = torch.FloatTensor([1])
@@ -157,8 +156,8 @@ if __name__=="__main__":
                 p.requires_grad = True # they are set to False below in netG update
 
             # train the discriminator Diters times
-            if gen_iterations < 25 or gen_iterations % 500 == 0:
-                Diters = 200
+            if gen_iterations < 25 or gen_iterations % 100 == 0:
+                Diters = 15
             else:
                 Diters = opt.Diters
             j = 0
@@ -202,27 +201,23 @@ if __name__=="__main__":
                 ## input energy
                 input_energy.resize_as_(real_cpu_e.float()).copy_(real_cpu_e.float())
  
-		        ## quick and dirt fix for imp parameter 
-                impoint = torch.FloatTensor(batch_size,2).uniform_(-1.5, 1.5) 
+
                  
                 if torch.cuda.is_available():
                     inputv_layer = Variable(input_layer.cuda())
                     inputv_e = Variable(input_energy.cuda())
-                    inputv_imp = Variable(impoint.cuda()) ## input impact point
                 else :
                     inputv_layer = Variable(input_layer)
                     inputv_e = Variable(input_energy)
-                    inputv_imp = Variable(impoint) ## input impact point
                     
 		
-                #print (epoch, inputv_e.shape)
-                #print (epoch, inputv_imp.shape) 
-                errD_real = netD(inputv_layer, inputv_e, inputv_imp)
+     
+                errD_real = netD(inputv_layer, inputv_e)
                 errD_real.backward(one) 
                 
                 # train with fake
                 noise.resize_(batch_size, nz).normal_(0, 1)
-                input_energy.resize_(batch_size, 1).uniform_(10,100)
+                #input_energy.resize_(batch_size, 1).uniform_(10, 100)
                 
                 if torch.cuda.is_available():
                     inputv_e = Variable(input_energy.cuda())
@@ -231,9 +226,8 @@ if __name__=="__main__":
                     inputv_e = Variable(input_energy)
                     noisev = Variable(noise, volatile = True) # totally freeze netG
                 
-                fake = Variable(netG(noisev, inputv_e, inputv_imp).data)
-                inputv_layer = fake
-                errD_fake = netD(inputv_layer, inputv_e, inputv_imp)
+              
+                errD_fake = netD(netG(noisev, inputv_e), inputv_e)
                 errD_fake.backward(mone)
                 errD = errD_real - errD_fake
                 optimizerD.step()
@@ -248,20 +242,16 @@ if __name__=="__main__":
             # in case our last batch was the tail batch of the dataloader,
             # make sure we feed a full batch of noise
             noise.resize_(batch_size, nz).normal_(0, 1)
-            input_energy.resize_(batch_size, 1).uniform_(10, 100)
+            #input_energy.resize_(batch_size, 1).uniform_(10, 100)
+            
             if torch.cuda.is_available():
                 noisev = Variable(noise.cuda())
-                inputv_e = Variable(input_energy.cuda())
-                inputv_imp = Variable(impoint.cuda())  ## input impact point
             else :
                 noisev = Variable(noise)
-                inputv_e = Variable(input_energy)
-                inputv_imp = Variable(impoint)  ## input impact point
             
             
             
-            fake = netG(noisev, inputv_e, inputv_imp) 
-            errG = netD(fake, inputv_e, inputv_imp)
+            errG = netD(netG(noisev, inputv_e), inputv_e)
             errG.backward(one)
             optimizerG.step()
             gen_iterations += 1    

@@ -19,43 +19,49 @@ class DCGAN_D(nn.Module):
         self.nc = nc
 
         ## linear layers
-        self.cond1 = torch.nn.Linear(3, 10)
+        self.cond1 = torch.nn.Linear(1, 10)
         self.cond2 = torch.nn.Linear(10, isize*isize)
         
         ### convolution
-        self.conv1 = torch.nn.Conv2d(nc+1, ndf*8, kernel_size=3, stride=1, padding=1)
+        self.conv1 = torch.nn.Conv2d(nc+1, ndf*8, kernel_size=3, stride=1, padding=1, bias=False)
         ## batch-normalization
         self.bn1 = torch.nn.BatchNorm2d(ndf*8)
         ## convolution
-        self.conv2 = torch.nn.Conv2d(ndf*8, ndf*4, kernel_size=3, stride=1, padding=1)
+        self.conv2 = torch.nn.Conv2d(ndf*8, ndf*4, kernel_size=3, stride=1, padding=1, bias=False)
         ## batch-normalization
         self.bn2 = torch.nn.BatchNorm2d(ndf*4)
         #convolution
-        self.conv3 = torch.nn.Conv2d(ndf*4, ndf*2, kernel_size=3, stride=1, padding=1)
+        self.conv3 = torch.nn.Conv2d(ndf*4, ndf*2, kernel_size=3, stride=1, padding=1, bias=False)
         ## batch-normalization
         self.bn3 = torch.nn.BatchNorm2d(ndf*2)
         #convolution
-        self.conv4 = torch.nn.Conv2d(ndf*2, ndf, kernel_size=3, stride=1, padding=1)
+        self.conv4 = torch.nn.Conv2d(ndf*2, ndf*2, kernel_size=3, stride=1, padding=1, bias=False)
         
+        ## batch-normalization
+        self.bn4 = torch.nn.BatchNorm2d(ndf*2)
+        #convolution
+        self.conv5 = torch.nn.Conv2d(ndf*2, ndf, kernel_size=3, stride=1, padding=1, bias=False)
+
         # Read-out layer : ndf * isize * isize input features, ndf output features 
         self.fc1 = torch.nn.Linear(ndf * isize * isize, 1)
         
-    def forward(self, x, energy, impactPoint):
+    def forward(self, x, energy):
         
-        ## conditioning on energy and impact parameter
-        t = F.leaky_relu(self.cond1(torch.cat((energy, impactPoint), 1)), 0.2, inplace=True)
+        ## conditioning on energy
+        t = F.leaky_relu(self.cond1(energy), 0.2, inplace=True)
         t = F.leaky_relu(self.cond2(t))
         
         ## reshape into two 2D
         t = t.view(-1, 1, self.isize, self.isize)
         
-        ## concentration with input : 31 (30layers + 1 cond) x 30 x 30
+        ## concentration with input : N+1 (Nlayers + 1 cond) x 30 x 30
         x = torch.cat((x, t), 1)
         
         x = F.leaky_relu(self.bn1(self.conv1(x)), 0.2, inplace=True)
         x = F.leaky_relu(self.bn2(self.conv2(x)), 0.2, inplace=True)
         x = F.leaky_relu(self.bn3(self.conv3(x)), 0.2, inplace=True)
-        x = F.leaky_relu(self.conv4(x), 0.2, inplace=True)
+        x = F.leaky_relu(self.bn4(self.conv4(x)), 0.2, inplace=True)
+        x = F.leaky_relu(self.conv5(x), 0.2, inplace=True)
         #Size changes from (nc+1, 30, 30) to (ndf, 30, 30)
 
         
@@ -83,54 +89,54 @@ class DCGAN_G(nn.Module):
         self.nc = nc
         self.z = z
         
-        self.cond1 = torch.nn.Linear(self.z+3, 50)
-        self.cond2 = torch.nn.Linear(50, 10*10*ngf)
+        self.cond1 = torch.nn.Linear(self.z+1, 100)
+        self.cond2 = torch.nn.Linear(100, 10*10*ngf)
         
         ## deconvolution
-        self.deconv1 = torch.nn.ConvTranspose2d(ngf, ngf*2, kernel_size=3, stride=3, padding=1)
+        self.deconv1 = torch.nn.ConvTranspose2d(ngf, ngf*2, kernel_size=3, stride=3, padding=1, bias=False)
         ## batch-normalization
         self.bn1 = torch.nn.BatchNorm2d(ngf*2)
         ## deconvolution
-        self.deconv2 = torch.nn.ConvTranspose2d(ngf*2, ngf*4, kernel_size=3, stride=2, padding=1)
+        self.deconv2 = torch.nn.ConvTranspose2d(ngf*2, ngf*4, kernel_size=3, stride=2, padding=1, bias=False)
         ## batch-normalization
         self.bn2 = torch.nn.BatchNorm2d(ngf*4)
         # deconvolution
-        self.deconv3 = torch.nn.ConvTranspose2d(ngf*4, ngf*8, kernel_size=3, stride=2, padding=1)
+        self.deconv3 = torch.nn.ConvTranspose2d(ngf*4, ngf*8, kernel_size=3, stride=2, padding=1, bias=False)
         ## batch-normalization
         self.bn3 = torch.nn.BatchNorm2d(ngf*8)
         
         ## convolution 
-        self.conv0 = torch.nn.Conv2d(ngf*8, 1, kernel_size=3, stride=4, padding=1)
+        self.conv0 = torch.nn.Conv2d(ngf*8, 1, kernel_size=3, stride=4, padding=1, bias=False)
         ## batch-normalisation
         self.bn0 = torch.nn.BatchNorm2d(1)
         
         ## convolution 
-        self.conv1 = torch.nn.Conv2d(nc, ngf*4, kernel_size=3, stride=1, padding=1)
+        self.conv1 = torch.nn.Conv2d(nc, ngf*4, kernel_size=3, stride=1, padding=1, bias=False)
         ## batch-normalisation
         self.bn01 = torch.nn.BatchNorm2d(ngf*4)
         
         ## convolution 
-        self.conv2 = torch.nn.Conv2d(ngf*4, ngf*8, kernel_size=3, stride=1, padding=1)
+        self.conv2 = torch.nn.Conv2d(ngf*4, ngf*8, kernel_size=3, stride=1, padding=1, bias=False)
         ## batch-normalisation
         self.bn02 = torch.nn.BatchNorm2d(ngf*8)
         
         ## convolution 
-        self.conv3 = torch.nn.Conv2d(ngf*8, ngf*4, kernel_size=3, stride=1, padding=1)
+        self.conv3 = torch.nn.Conv2d(ngf*8, ngf*4, kernel_size=3, stride=1, padding=1, bias=False)
         ## batch-normalisation
         self.bn03 = torch.nn.BatchNorm2d(ngf*4)
         
         ## convolution 
-        self.conv4 = torch.nn.Conv2d(ngf*4, nc, kernel_size=3, stride=1, padding=1)
+        self.conv4 = torch.nn.Conv2d(ngf*4, nc, kernel_size=3, stride=1, padding=1, bias=False)
     
         
         
-    def forward(self, noise, energy, impactPoint):
+    def forward(self, noise, energy):
         
         layer = []
          ### need to do generated 30 layers, hence the loop!
         for i in range(self.nc):     
-            ## conditioning on energy, impact parameter and noise
-            x = F.leaky_relu(self.cond1(torch.cat((energy, impactPoint, noise), 1)), 0.2, inplace=True)
+            ## conditioning on energy 
+            x = F.leaky_relu(self.cond1(torch.cat((energy, noise), 1)), 0.2, inplace=True)
             x = F.leaky_relu(self.cond2(x), 0.2, inplace=True)
             
             ## change size for deconv2d network. Image is 10x10
