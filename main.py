@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 import torch.nn.parallel
 import torch.backends.cudnn as cudnn
-from torch.utils import data
+#from torch.utils import data
 import torch.optim as optim
 import torch.utils.data
 import torchvision.datasets as dset
@@ -57,17 +57,25 @@ if __name__=="__main__":
 
 
     ## Load and make them iterable
-    loader_params = {'batch_size': opt.batchSize, 'shuffle': True, 'num_workers': 6}
+    #loader_params = {'batch_size': opt.batchSize, 'shuffle': True, 'num_workers': 6}
     path = '/beegfs/desy/user/eren/WassersteinGAN/data/gamma-fullG.hdf5'
-    #path = '/beegfs/desy/user/eren/WassersteinGAN/data/gamma-fullG-50GeV.hdf5'
-    d = H.HDF5Dataset(path, '30x30/layers')
-    e = H.HDF5Dataset(path, '30x30/energy')
-    dataloader_layer  = data.DataLoader(d, **loader_params)
-    dataloader_energy = data.DataLoader(e, **loader_params)
+    #d = H.HDF5Dataset(path, '30x30/layers')
+    #e = H.HDF5Dataset(path, '30x30/energy')
+    #dataloader_layer  = data.DataLoader(d, **loader_params)
+    #dataloader_energy = data.DataLoader(e, **loader_params)
 
-    data_layer = iter(dataloader_layer)
-    data_energy = iter(dataloader_energy)
+    #data_layer = iter(dataloader_layer)
+    #data_energy = iter(dataloader_energy)
 
+    data = H.HDF5Dataset(path, '30x30')
+    energies = data['energy'][:].reshape(len(data['energy']))
+    layers = data['layers'][:].sum(axis=1) 
+
+    training_dataset = tuple(zip(layers, energies))
+
+
+    dataloader = torch.utils.data.DataLoader(training_dataset, batch_size=opt.batchSize,
+                                         shuffle=True, num_workers=6)
 
     ngpu = int(opt.ngpu)
     nz = int(opt.nz)
@@ -145,10 +153,10 @@ if __name__=="__main__":
 
     gen_iterations = 0
     for epoch in range(opt.niter):
-        data_layer = iter(dataloader_layer)
-        data_energy = iter(dataloader_energy)
+        #data_layer = iter(dataloader_layer)
+        #data_energy = iter(dataloader_energy)
         i = 0
-        while i < len(dataloader_layer):
+        while i < len(dataloader):
             ############################
             # (1) Update D network
             ###########################
@@ -156,12 +164,12 @@ if __name__=="__main__":
                 p.requires_grad = True # they are set to False below in netG update
 
             # train the discriminator Diters times
-            if gen_iterations < 25 or gen_iterations % 100 == 0:
-                Diters = 15
+            if gen_iterations < 25 or gen_iterations % 500 == 0:
+                Diters = 50
             else:
                 Diters = opt.Diters
             j = 0
-            while j < Diters and i < len(dataloader_layer):
+            while j < Diters and i < len(dataloader):
                 j += 1
 
                 # clamp parameters to a cube
@@ -169,14 +177,19 @@ if __name__=="__main__":
                     p.data.clamp_(-0.01, 0.01)
 
                 ### input size matters. Reshape if we want 30x30
-                if opt.full :
-                    layer = data_layer.next()
-                else :
-                    tmp = data_layer.next()      ## [Bs, 30, 30 , 30 ]
-                    layer = torch.sum(tmp, dim=1)
-                    layer = layer.unsqueeze(1)  ## [Bs, 1, 30 , 30 ]
+                #if opt.full :
+                #    layer = data_layer.next()
+                #else :
+                #    tmp = data_layer.next()      ## [Bs, 30, 30 , 30 ]
+                #    layer = torch.sum(tmp, dim=1)
+                #    layer = layer.unsqueeze(1)  ## [Bs, 1, 30 , 30 ]
                     
-                energy = data_energy.next()
+                
+                layer, energy = iter(dataloader).next() 
+                layer = layer.unsqueeze(1)    ## [Bs, 1, 30 , 30 ]
+                energy = energy.unsqueeze(-1)  ## [Bs, 1 ]
+ 
+                #energy = data_energy.next()
                 i += 1
                 
                 #print ("Updating D network, step: {}".format(j))
@@ -201,15 +214,14 @@ if __name__=="__main__":
                 ## input energy
                 input_energy.resize_as_(real_cpu_e.float()).copy_(real_cpu_e.float())
  
-
-                 
+                
                 if torch.cuda.is_available():
                     inputv_layer = Variable(input_layer.cuda())
                     inputv_e = Variable(input_energy.cuda())
                 else :
                     inputv_layer = Variable(input_layer)
                     inputv_e = Variable(input_energy)
-                    
+
 		
      
                 errD_real = netD(inputv_layer, inputv_e)
@@ -217,17 +229,20 @@ if __name__=="__main__":
                 
                 # train with fake
                 noise.resize_(batch_size, nz).normal_(0, 1)
-                #input_energy.resize_(batch_size, 1).uniform_(10, 100)
+                input_energy.resize_(batch_size, 1).uniform_(10, 100)
                 
-                if torch.cuda.is_available():
-                    inputv_e = Variable(input_energy.cuda())
-                    noisev = Variable(noise.cuda(), volatile = True) # totally freeze netG
-                else :
-                    inputv_e = Variable(input_energy)
-                    noisev = Variable(noise, volatile = True) # totally freeze netG
+                with torch.no_grad():
+                    if torch.cuda.is_available():
+                        inputv_e = Variable(input_energy.cuda())
+                        noisev = Variable(noise.cuda()) # totally freeze netG
+                    else :
+                        inputv_e = Variable(input_energy)
+                        noisev = Variable(noise) # totally freeze netG
+
                 
-              
-                errD_fake = netD(netG(noisev, inputv_e), inputv_e)
+                h = noisev * inputv_e
+
+                errD_fake = netD(netG(h), inputv_e)
                 errD_fake.backward(mone)
                 errD = errD_real - errD_fake
                 optimizerD.step()
@@ -242,21 +257,21 @@ if __name__=="__main__":
             # in case our last batch was the tail batch of the dataloader,
             # make sure we feed a full batch of noise
             noise.resize_(batch_size, nz).normal_(0, 1)
-            #input_energy.resize_(batch_size, 1).uniform_(10, 100)
+            input_energy.resize_(batch_size, 1).uniform_(10, 100)
             
+            noisev = noise 
             if torch.cuda.is_available():
-                noisev = Variable(noise.cuda())
-            else :
-                noisev = Variable(noise)
+                noisev = noisev.cuda()
             
             
             
-            errG = netD(netG(noisev, inputv_e), inputv_e)
+            
+            errG = netD(netG(noisev * inputv_e), inputv_e)
             errG.backward(one)
             optimizerG.step()
             gen_iterations += 1    
             print('[%d/%d][%d/%d][%d] Loss_D: %f Loss_G: %f Loss_D_real: %f Loss_D_fake %f'
-                % (epoch, opt.niter, i, len(dataloader_layer), gen_iterations,
+                % (epoch, opt.niter, i, len(dataloader), gen_iterations,
                 errD.data[0], errG.data[0], errD_real.data[0], errD_fake.data[0]))
 
 
