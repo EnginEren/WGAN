@@ -33,36 +33,38 @@ class DCGAN_D(nn.Module):
         self.bn3 = torch.nn.BatchNorm2d(ndf*2)
         #convolution
         self.conv4 = torch.nn.Conv2d(ndf*2, ndf, kernel_size=4, stride=2, padding=1, bias=False)
+        ## batch-normalization
+        self.bn4 = torch.nn.BatchNorm2d(ndf)
+        #convolution
+        self.conv5 = torch.nn.Conv2d(ndf, 1, kernel_size=2, stride=2, padding=1, bias=False)
+        # Read-out layer : 4 * 4  input features, ndf output features 
+        self.fc = torch.nn.Linear((4 * 4)+1, 1)
 
-        # Read-out layer : ndf * 2 * 2 input features, ndf output features 
-        self.fc1 = torch.nn.Linear((ndf * 6 * 6)+1, 50)
-        self.fc2 = torch.nn.Linear(50, 25)
-        self.fc3 = torch.nn.Linear(25, 1)
+
         
     def forward(self, x, energy):
         
         x = F.leaky_relu(self.bn1(self.conv1(x)), 0.2, inplace=True) # 15 x 15
         x = F.leaky_relu(self.bn2(self.conv2(x)), 0.2, inplace=True) # 14 x 14
         x = F.leaky_relu(self.bn3(self.conv3(x)), 0.2, inplace=True) # 13 x 13
-        x = F.leaky_relu(self.conv4(x), 0.2, inplace=True)  # 6x6
+        x = F.leaky_relu(self.bn4(self.conv4(x)), 0.2, inplace=True)  # 6x6
+        x = F.leaky_relu(self.conv5(x), 0.2, inplace=True)  # 4x4
 
-        #After series of convlutions --> size changes from (nc, 30, 30) to (ndf, 6, 6)
+        #After series of convlutions --> size changes from (nc, 30, 30) to (1, 4, 4)
 
         
-        x = x.view(-1, self.ndf * 6 * 6) 
+        x = x.view(-1, 4 * 4) 
         x = torch.cat((x, energy), 1)
         
-        # Size changes from (ndf, 30, 30) to (1, (ndf * 6 * 6) + 1) 
+        # Size changes from (ndf, 30, 30) to (1, (4 * 4) + 1) 
         #Recall that the -1 infers this dimension from the other given dimension
 
 
         # Read-out layer 
-        x = F.leaky_relu(self.fc1(x), 0.2, inplace=True)
-        x = F.leaky_relu(self.fc2(x), 0.2, inplace=True)
-        x = self.fc3(x)
-        
+        x = F.leaky_relu(self.fc(x), 0.2, inplace=True)
         x = x.mean(0)
         return x.view(1)
+
 
 
 
@@ -77,44 +79,45 @@ class DCGAN_G(nn.Module):
         self.nc = nc
         self.z = z
         
-        ## linear projection
-        self.cond = torch.nn.Linear(self.z, 5*5*ngf*8)
+    
         
         ## deconvolution
-        self.deconv1 = torch.nn.ConvTranspose2d(ngf*8, ngf*4, kernel_size=2, stride=3, padding=1, bias=False)
+        self.deconv1 = torch.nn.ConvTranspose2d(z, ngf*8, kernel_size=4, stride=1, padding=0, bias=False)
         ## batch-normalization
-        self.bn1 = torch.nn.BatchNorm2d(ngf*4)
+        self.bn1 = torch.nn.BatchNorm2d(ngf*8)
         ## deconvolution
-        self.deconv2 = torch.nn.ConvTranspose2d(ngf*4, ngf*2, kernel_size=2, stride=2, padding=1, bias=False)
+        self.deconv2 = torch.nn.ConvTranspose2d(ngf*8, ngf*4, kernel_size=4, stride=2, padding=1, bias=False)
         ## batch-normalization
-        self.bn2 = torch.nn.BatchNorm2d(ngf*2)
+        self.bn2 = torch.nn.BatchNorm2d(ngf*4)
         # deconvolution
-        self.deconv3 = torch.nn.ConvTranspose2d(ngf*2, ngf, kernel_size=6, stride=1, padding=1, bias=False)
+        self.deconv3 = torch.nn.ConvTranspose2d(ngf*4, ngf*2, kernel_size=4, stride=2, padding=1, bias=False)
         ## batch-normalization
-        self.bn3 = torch.nn.BatchNorm2d(ngf)
+        self.bn3 = torch.nn.BatchNorm2d(ngf*2)
         # deconvolution
-        self.deconv4 = torch.nn.ConvTranspose2d(ngf, 1, kernel_size=8, stride=1, padding=1, bias=False)
-        
+        self.deconv4 = torch.nn.ConvTranspose2d(ngf*2, ngf, kernel_size=4, stride=2, padding=1, bias=False)
+        ## batch-normalization
+        self.bn4 = torch.nn.BatchNorm2d(ngf)
+        # deconvolution
+        self.deconv5 = torch.nn.ConvTranspose2d(ngf, 1, kernel_size=1, stride=1, padding=1, bias=False)
+
 
         
         
-    def forward(self, noise):
+    def forward(self, z):
+        
+        z = z.view(-1,self.z,1,1)
         
         layer = []
         ## need to do generate N layers, hence the loop!
         for i in range(self.nc):     
     
-            #noise 
-            x = F.leaky_relu(self.cond(noise), 0.2, inplace=True)
-
-            ## change size for deconv2d network. Image is 5x5
-            x = x.view(-1,self.ngf*8,5,5)        
 
             ## apply series of deconv2d and batch-norm
-            x = F.leaky_relu(self.bn1(self.deconv1(x, output_size=[x.size(0), x.size(1) , 12, 12])), 0.2, inplace=True) 
-            x = F.leaky_relu(self.bn2(self.deconv2(x, output_size=[x.size(0), x.size(1) , 22, 22])), 0.2, inplace=True)
-            x = F.leaky_relu(self.bn3(self.deconv3(x, output_size=[x.size(0), x.size(1) , 25, 25])), 0.2, inplace=True)                         
-            x = F.relu(self.deconv4(x, output_size=[x.size(0), x.size(1) , 30, 30])) 
+            x = F.leaky_relu(self.bn1(self.deconv1(z)), 0.2, inplace=True)  # 4 x 4 
+            x = F.leaky_relu(self.bn2(self.deconv2(x)), 0.2, inplace=True)  # 8 x 8
+            x = F.leaky_relu(self.bn3(self.deconv3(x)), 0.2, inplace=True)  # 16 x 16 
+            x = F.leaky_relu(self.bn4(self.deconv4(x)), 0.2, inplace=True)  # 32 x 32
+            x = F.relu(self.deconv5(x))                                     # 30 x 30
 
             ##Image is 30x30 now
             

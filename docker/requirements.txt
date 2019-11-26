@@ -7,3 +7,5 @@ scipy
 h5py
 jupyter
 torchsummary
+tensorflow
+tensorboardX

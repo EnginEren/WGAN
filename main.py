@@ -16,7 +16,7 @@ import os
 import json
 from pathlib import Path
 import models.HDF5Dataset as H
-
+import numpy as np
 import models.dcgan as dcgan
 import models.mlp as mlp
 
@@ -57,15 +57,8 @@ if __name__=="__main__":
 
 
     ## Load and make them iterable
-    #loader_params = {'batch_size': opt.batchSize, 'shuffle': True, 'num_workers': 6}
-    path = '/beegfs/desy/user/eren/WassersteinGAN/data/gamma-fullG.hdf5'
-    #d = H.HDF5Dataset(path, '30x30/layers')
-    #e = H.HDF5Dataset(path, '30x30/energy')
-    #dataloader_layer  = data.DataLoader(d, **loader_params)
-    #dataloader_energy = data.DataLoader(e, **loader_params)
-
-    #data_layer = iter(dataloader_layer)
-    #data_energy = iter(dataloader_energy)
+ 
+    path = '/beegfs/desy/user/eren/WassersteinGAN/data/gamma-fullG-fixed50-10GeV.hdf5'
 
     data = H.HDF5Dataset(path, '30x30')
     energies = data['energy'][:].reshape(len(data['energy']))
@@ -165,7 +158,7 @@ if __name__=="__main__":
 
             # train the discriminator Diters times
             if gen_iterations < 25 or gen_iterations % 500 == 0:
-                Diters = 50
+                Diters = 25
             else:
                 Diters = opt.Diters
             j = 0
@@ -175,15 +168,6 @@ if __name__=="__main__":
                 # clamp parameters to a cube
                 for p in netD.parameters():
                     p.data.clamp_(-0.01, 0.01)
-
-                ### input size matters. Reshape if we want 30x30
-                #if opt.full :
-                #    layer = data_layer.next()
-                #else :
-                #    tmp = data_layer.next()      ## [Bs, 30, 30 , 30 ]
-                #    layer = torch.sum(tmp, dim=1)
-                #    layer = layer.unsqueeze(1)  ## [Bs, 1, 30 , 30 ]
-                    
                 
                 layer, energy = iter(dataloader).next() 
                 layer = layer.unsqueeze(1)    ## [Bs, 1, 30 , 30 ]
@@ -223,13 +207,16 @@ if __name__=="__main__":
                     inputv_e = Variable(input_energy)
 
 		
-     
+                #train with real images 
                 errD_real = netD(inputv_layer, inputv_e)
                 errD_real.backward(one) 
                 
                 # train with fake
                 noise.resize_(batch_size, nz).normal_(0, 1)
-                input_energy.resize_(batch_size, 1).uniform_(10, 100)
+                inc_energy_label = [10, 50]
+                energy_labelv = np.random.choice(inc_energy_label, (batch_size,1), p=[0.5, 0.5])
+                energy_labelv = torch.from_numpy(energy_labelv).float()
+                input_energy.resize_(batch_size, 1).copy_(energy_labelv) 
                 
                 with torch.no_grad():
                     if torch.cuda.is_available():
@@ -239,7 +226,7 @@ if __name__=="__main__":
                         inputv_e = Variable(input_energy)
                         noisev = Variable(noise) # totally freeze netG
 
-                
+                inputv_e = inputv_e * 100.00 
                 h = noisev * inputv_e
 
                 errD_fake = netD(netG(h), inputv_e)
@@ -257,14 +244,21 @@ if __name__=="__main__":
             # in case our last batch was the tail batch of the dataloader,
             # make sure we feed a full batch of noise
             noise.resize_(batch_size, nz).normal_(0, 1)
-            input_energy.resize_(batch_size, 1).uniform_(10, 100)
             
-            noisev = noise 
+            inc_energy_label = [10, 50]
+            energy_labelv = np.random.choice(inc_energy_label, (batch_size,1), p=[0.5, 0.5])
+            energy_labelv = torch.from_numpy(energy_labelv).float()
+            input_energy.resize_(batch_size, 1).copy_(energy_labelv) 
+            
             if torch.cuda.is_available():
-                noisev = noisev.cuda()
+                inputv_e = Variable(input_energy.cuda())
+                noisev = Variable(noise.cuda()) 
+            else :
+                inputv_e = Variable(input_energy)
+                noisev = Variable(noise) 
+
             
-            
-            
+            inputv_e = inputv_e * 100.00 
             
             errG = netD(netG(noisev * inputv_e), inputv_e)
             errG.backward(one)
